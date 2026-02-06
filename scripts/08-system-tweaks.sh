@@ -41,10 +41,10 @@ configure_lid_switch() {
         echo "HandleLidSwitchExternalPower already set to ignore"
     fi
 
-    echo "Restarting systemd-logind..."
-    systemctl restart systemd-logind
-
-    echo "Lid switch configured to be ignored"
+    # NOTE: Do NOT restart systemd-logind here!
+    # It kills all active sessions and kicks user to login screen.
+    # Changes take effect on next reboot.
+    echo "Lid switch configured (takes effect after reboot)"
     echo
 }
 
@@ -136,9 +136,36 @@ configure_swap() {
     echo
 }
 
+# Force X11 session instead of Wayland (more compatible with 2013 MacBook)
+configure_xorg_session() {
+    echo "[5/6] Configuring GDM to use X11 instead of Wayland..."
+
+    local GDM_CONF="/etc/gdm3/custom.conf"
+
+    if [ ! -f "$GDM_CONF" ]; then
+        echo "GDM config not found (not using GDM?), skipping"
+        echo
+        return 0
+    fi
+
+    if grep -q "^WaylandEnable=false" "$GDM_CONF"; then
+        echo "Wayland already disabled in GDM"
+    else
+        # Uncomment or add WaylandEnable=false
+        if grep -q "^#.*WaylandEnable" "$GDM_CONF"; then
+            sed -i 's/^#.*WaylandEnable.*/WaylandEnable=false/' "$GDM_CONF"
+        else
+            # Add under [daemon] section
+            sed -i '/^\[daemon\]/a WaylandEnable=false' "$GDM_CONF"
+        fi
+        echo "Disabled Wayland in GDM (will use X11/Xorg)"
+    fi
+    echo
+}
+
 # GRUB configuration
 configure_grub() {
-    echo "[5/5] Checking GRUB configuration..."
+    echo "[6/6] Checking GRUB configuration..."
 
     local GRUB_CONFIG="/etc/default/grub"
 
@@ -180,7 +207,10 @@ print_summary() {
         echo "   - No swap configured"
     fi
     echo
-    echo "5. GRUB:"
+    echo "5. Display Session:"
+    echo "   - Wayland disabled, using X11/Xorg (better 2013 MacBook compatibility)"
+    echo
+    echo "6. GRUB:"
     echo "   - GRUB_CMDLINE_LINUX_DEFAULT=\"quiet splash\""
     echo
 }
@@ -191,13 +221,14 @@ main() {
     configure_timezone
     disable_automatic_updates
     configure_swap
+    configure_xorg_session
     configure_grub
     print_summary
 
     echo "=== System Tweaks Complete ==="
     echo
     echo "NOTES:"
-    echo "  - Lid switch changes require systemd-logind restart (already done)"
+    echo "  - Lid switch & Wayland changes take effect after reboot"
     echo "  - GRUB changes take effect on next boot"
     echo "  - Swap is active immediately and persistent across reboots"
     echo
