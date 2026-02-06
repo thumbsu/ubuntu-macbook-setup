@@ -1,0 +1,7 @@
+*.log
+*.bak
+*.swp
+*.swo
+*~
+.DS_Store
+.env
