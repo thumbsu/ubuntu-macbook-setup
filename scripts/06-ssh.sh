@@ -25,7 +25,11 @@ echo
 install_ssh_server() {
     echo "[1/6] Installing OpenSSH server..."
 
-    apt-get install -y openssh-server
+    if dpkg -l | grep -q "^ii.*openssh-server"; then
+        echo "OpenSSH server already installed"
+    else
+        apt-get install -y openssh-server
+    fi
 
     echo "OpenSSH version: $(ssh -V 2>&1 | cut -d, -f1)"
     echo
@@ -35,16 +39,23 @@ install_ssh_server() {
 configure_sshd() {
     echo "[2/6] Configuring SSH daemon..."
 
+    if [ ! -f "$SSHD_CONFIG_SOURCE" ]; then
+        echo "ERROR: Custom sshd_config not found at $SSHD_CONFIG_SOURCE"
+        exit 1
+    fi
+
+    # Check if our config is already installed (compare content)
+    if [ -f /etc/ssh/sshd_config ] && diff -q "$SSHD_CONFIG_SOURCE" /etc/ssh/sshd_config &>/dev/null; then
+        echo "Custom sshd_config already installed, skipping"
+        echo
+        return 0
+    fi
+
     if [ ! -f /etc/ssh/sshd_config.bak ]; then
         echo "Backing up original sshd_config..."
         cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
     else
         echo "Backup already exists: /etc/ssh/sshd_config.bak"
-    fi
-
-    if [ ! -f "$SSHD_CONFIG_SOURCE" ]; then
-        echo "ERROR: Custom sshd_config not found at $SSHD_CONFIG_SOURCE"
-        exit 1
     fi
 
     echo "Installing custom sshd_config..."

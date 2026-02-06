@@ -14,6 +14,11 @@ log_error() {
 install_fcitx5() {
     log_info "Installing fcitx5 and Korean input components..."
 
+    if dpkg -l | grep -q "^ii.*fcitx5-hangul"; then
+        log_info "fcitx5-hangul already installed, skipping"
+        return 0
+    fi
+
     local packages=(
         fcitx5
         fcitx5-hangul
@@ -39,8 +44,8 @@ configure_environment_variables() {
         "INPUT_METHOD=fcitx"
     )
 
-    if [[ -f "$env_file" ]]; then
-        cp "$env_file" "${env_file}.backup"
+    if [[ -f "$env_file" ]] && [[ ! -f "${env_file}.backup.pre-fcitx" ]]; then
+        cp "$env_file" "${env_file}.backup.pre-fcitx"
     fi
 
     for var in "${env_vars[@]}"; do
@@ -113,8 +118,6 @@ main() {
     fi
 
     log_info "Starting Korean input method setup"
-
-    apt update
 
     install_fcitx5
     configure_environment_variables

@@ -6,6 +6,7 @@
 # Usage:
 #   sudo ./setup.sh              - Run all setup scripts
 #   sudo ./setup.sh --only NAME  - Run specific script
+#   sudo ./setup.sh --from NAME  - Resume from a specific script
 #   ./setup.sh --list            - List available scripts
 #   ./setup.sh --help            - Show usage information
 
@@ -33,6 +34,7 @@ SCRIPTS=(
     "06-ssh"
     "07-firewall"
     "08-system-tweaks"
+    "09-keyboard-remap"
 )
 
 # Track execution results
@@ -117,17 +119,21 @@ show_help() {
 Usage: sudo $0 [OPTIONS]
 
 Ubuntu 24.04 LTS setup script for 2013 MacBook Pro.
+All scripts are idempotent and safe to re-run.
 
 OPTIONS:
     --help              Show this help message
     --list              List all available scripts
     --only SCRIPT       Run only the specified script
                         (e.g., --only docker, --only 04-docker)
+    --from SCRIPT       Resume from a specific script (runs it and all after)
+                        (e.g., --from docker, --from 06-ssh)
 
 EXAMPLES:
     sudo $0                      # Run all scripts in order
     sudo $0 --only docker        # Run only docker installation
     sudo $0 --only 04-docker     # Same as above
+    sudo $0 --from ssh           # Resume from SSH script onwards
     $0 --list                    # List available scripts (no sudo needed)
 
 SCRIPTS (in execution order):
@@ -190,6 +196,29 @@ run_all_scripts() {
             log_warning "Continuing with remaining scripts..."
         fi
         echo ""
+    done
+
+    return "${failed}"
+}
+
+# Run scripts starting from a specific one
+run_from_script() {
+    local start_script="$1"
+    local failed=0
+    local found=false
+
+    for script in "${SCRIPTS[@]}"; do
+        if [[ "${script}" == "${start_script}" ]]; then
+            found=true
+        fi
+
+        if [[ "${found}" == true ]]; then
+            if ! run_script "${script}"; then
+                failed=$((failed + 1))
+                log_warning "Continuing with remaining scripts..."
+            fi
+            echo ""
+        fi
     done
 
     return "${failed}"
@@ -276,6 +305,7 @@ print_summary() {
 # Main function
 main() {
     local only_script=""
+    local from_script=""
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -297,6 +327,15 @@ main() {
                 only_script="$2"
                 shift 2
                 ;;
+            --from)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--from requires a script name"
+                    echo "Use --list to see available scripts"
+                    exit 1
+                fi
+                from_script="$2"
+                shift 2
+                ;;
             *)
                 log_error "Unknown option: $1"
                 show_help
@@ -306,10 +345,8 @@ main() {
     done
 
     # Check root for execution modes
-    if [[ -n "${only_script}" ]] || [[ $# -eq 0 ]]; then
-        check_root
-        init_log
-    fi
+    check_root
+    init_log
 
     # Execute based on mode
     if [[ -n "${only_script}" ]]; then
@@ -320,6 +357,19 @@ main() {
             print_summary
         else
             log_error "Script not found: ${only_script}"
+            echo ""
+            echo "Use --list to see available scripts"
+            exit 1
+        fi
+    elif [[ -n "${from_script}" ]]; then
+        # Resume from specific script
+        local script_name
+        if script_name=$(find_script "${from_script}"); then
+            log_info "Resuming from: ${script_name}"
+            run_from_script "${script_name}"
+            print_summary
+        else
+            log_error "Script not found: ${from_script}"
             echo ""
             echo "Use --list to see available scripts"
             exit 1

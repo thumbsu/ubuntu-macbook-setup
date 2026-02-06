@@ -9,9 +9,17 @@ fi
 echo "=== UFW Firewall Setup ==="
 echo
 
+# Required ports
+REQUIRED_RULES=(
+    "22/tcp:SSH"
+    "80/tcp:HTTP"
+    "443/tcp:HTTPS"
+    "9443/tcp:Portainer"
+)
+
 # Install UFW
 install_ufw() {
-    echo "[1/4] Installing UFW..."
+    echo "[1/3] Installing UFW..."
 
     if ! command -v ufw &>/dev/null; then
         apt-get install -y ufw
@@ -22,46 +30,40 @@ install_ufw() {
     echo
 }
 
-# Reset and configure UFW
+# Configure defaults and add rules (idempotent)
 configure_ufw() {
-    echo "[2/4] Configuring UFW..."
+    echo "[2/3] Configuring UFW rules..."
 
-    echo "Resetting UFW to defaults..."
-    ufw --force reset
-
-    echo "Setting default policies..."
+    # Set default policies (idempotent - ufw handles re-setting gracefully)
     ufw default deny incoming
     ufw default allow outgoing
 
-    echo
-}
+    # Add rules only if not already present
+    for rule_entry in "${REQUIRED_RULES[@]}"; do
+        local port_proto="${rule_entry%%:*}"
+        local comment="${rule_entry##*:}"
 
-# Add firewall rules
-add_firewall_rules() {
-    echo "[3/4] Adding firewall rules..."
-
-    echo "Allowing SSH (22/tcp)..."
-    ufw allow 22/tcp comment 'SSH'
-
-    echo "Allowing HTTP (80/tcp)..."
-    ufw allow 80/tcp comment 'HTTP'
-
-    echo "Allowing HTTPS (443/tcp)..."
-    ufw allow 443/tcp comment 'HTTPS'
-
-    echo "Allowing Portainer (9443/tcp)..."
-    ufw allow 9443/tcp comment 'Portainer'
+        if ufw status | grep -q "${port_proto}"; then
+            echo "Rule already exists: ${port_proto} (${comment})"
+        else
+            echo "Adding rule: ${port_proto} (${comment})..."
+            ufw allow "${port_proto}" comment "${comment}"
+        fi
+    done
 
     echo
 }
 
 # Enable UFW
 enable_ufw() {
-    echo "[4/4] Enabling UFW..."
+    echo "[3/3] Enabling UFW..."
 
-    ufw --force enable
-
-    echo "UFW enabled and active"
+    if ufw status | grep -q "Status: active"; then
+        echo "UFW already active"
+    else
+        ufw --force enable
+        echo "UFW enabled"
+    fi
     echo
 }
 
@@ -71,11 +73,13 @@ show_status() {
     ufw status verbose
     echo
 
-    echo "=== Open Ports Summary ==="
-    echo "  SSH:       22/tcp"
-    echo "  HTTP:      80/tcp"
-    echo "  HTTPS:     443/tcp"
-    echo "  Portainer: 9443/tcp"
+    echo "=== Expected Open Ports ==="
+    for rule_entry in "${REQUIRED_RULES[@]}"; do
+        local port_proto="${rule_entry%%:*}"
+        local comment="${rule_entry##*:}"
+        local port="${port_proto%%/*}"
+        printf "  %-12s %s\n" "${comment}:" "${port_proto}"
+    done
     echo
     echo "Default policies:"
     echo "  Incoming: DENY"
@@ -87,7 +91,6 @@ show_status() {
 main() {
     install_ufw
     configure_ufw
-    add_firewall_rules
     enable_ufw
     show_status
 

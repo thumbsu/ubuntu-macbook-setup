@@ -32,18 +32,23 @@ install_broadcom_wifi() {
 }
 
 install_fan_control() {
-    log_info "Installing fan control (mbpfan)..."
+    log_info "Checking fan control (mbpfan)..."
 
-    if ! DEBIAN_FRONTEND=noninteractive apt install -y mbpfan; then
-        log_error "Failed to install mbpfan"
-        return 1
+    if dpkg -l | grep -q "^ii.*mbpfan"; then
+        log_info "mbpfan already installed"
+    else
+        log_info "Installing mbpfan..."
+        if ! DEBIAN_FRONTEND=noninteractive apt install -y mbpfan; then
+            log_error "Failed to install mbpfan"
+            return 1
+        fi
     fi
 
     log_info "Configuring mbpfan..."
     local config_file="/etc/mbpfan.conf"
 
-    if [[ -f "$config_file" ]]; then
-        cp "$config_file" "${config_file}.backup"
+    if [[ -f "$config_file" ]] && [[ ! -f "${config_file}.backup.orig" ]]; then
+        cp "$config_file" "${config_file}.backup.orig"
     fi
 
     cat > "$config_file" << 'EOF'
@@ -79,18 +84,31 @@ install_backlight_keyboard() {
 }
 
 install_power_management() {
-    log_info "Installing power management tools (thermald and tlp)..."
+    log_info "Checking power management tools (thermald and tlp)..."
 
-    if ! DEBIAN_FRONTEND=noninteractive apt install -y thermald tlp; then
-        log_error "Failed to install power management tools"
-        return 1
+    local need_install=false
+    if ! dpkg -l | grep -q "^ii.*thermald"; then
+        need_install=true
+    fi
+    if ! dpkg -l | grep -q "^ii.*tlp "; then
+        need_install=true
+    fi
+
+    if [[ "$need_install" == true ]]; then
+        log_info "Installing thermald and tlp..."
+        if ! DEBIAN_FRONTEND=noninteractive apt install -y thermald tlp; then
+            log_error "Failed to install power management tools"
+            return 1
+        fi
+    else
+        log_info "thermald and tlp already installed"
     fi
 
     systemctl enable thermald
-    systemctl start thermald
+    systemctl start thermald || true
 
     systemctl enable tlp
-    systemctl start tlp
+    systemctl start tlp || true
 
     log_info "Power management tools installed and started successfully"
 }

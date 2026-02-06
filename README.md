@@ -16,6 +16,7 @@ Automated setup scripts for installing and configuring Ubuntu Desktop 24.04 LTS 
 | `06-ssh.sh` | SSH server with key authentication |
 | `07-firewall.sh` | UFW firewall (SSH, HTTP, HTTPS, Portainer) |
 | `08-system-tweaks.sh` | Lid switch, timezone, swap, auto-update disable |
+| `09-keyboard-remap.sh` | Toshy (macOS keybindings) + MacBook Fn key mode |
 
 ## Prerequisites
 
@@ -125,6 +126,15 @@ sudo systemctl restart sshd
 3. Add "Hangul" input method
 4. Set toggle shortcut (default: Ctrl+Space)
 
+### Keyboard Remapping (Toshy)
+
+After reboot:
+
+1. Enable "Toshy" extension in GNOME Extensions (required for Wayland)
+2. Check status: `toshy-config-start`
+3. Cmd+C/V/Z etc. should work like macOS
+4. F1-F12 keys work as function keys by default (hold Fn for media keys)
+
 ### Portainer
 
 Access Portainer web UI at: `https://<macbook-pro-ip>:9443`
@@ -144,6 +154,16 @@ git config --global user.email "your@email.com"
 - **Graphics**: Intel Iris (iris driver, works out of box)
 - **Fan**: Controlled via `mbpfan` service
 - **Lid**: Configured to stay awake when closed (server mode)
+- **Keyboard**: Toshy remaps keys to macOS layout; Fn key set to function key mode
+
+## Idempotency
+
+All scripts are safe to run multiple times. On re-run they will:
+- Skip already-installed packages
+- Skip already-configured settings
+- Not reset existing firewall rules
+- Not overwrite SSH config if unchanged
+- Not redeploy running containers
 
 ## File Structure
 
@@ -159,7 +179,8 @@ ubuntu-macbook-setup/
 │   ├── 05-dev-tools.sh
 │   ├── 06-ssh.sh
 │   ├── 07-firewall.sh
-│   └── 08-system-tweaks.sh
+│   ├── 08-system-tweaks.sh
+│   └── 09-keyboard-remap.sh
 ├── configs/
 │   ├── sshd_config
 │   └── docker-compose.yml

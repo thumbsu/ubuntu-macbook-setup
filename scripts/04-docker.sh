@@ -65,6 +65,11 @@ add_docker_repository() {
 }
 
 install_docker() {
+    if command -v docker &>/dev/null && docker --version &>/dev/null; then
+        log_info "Docker already installed: $(docker --version)"
+        return 0
+    fi
+
     log_info "Installing Docker Engine and related packages..."
 
     local packages=(
@@ -121,10 +126,10 @@ deploy_portainer() {
         return 1
     fi
 
-    # Stop and remove existing Portainer containers if present
-    if docker ps -a | grep -q portainer; then
-        log_info "Stopping existing Portainer containers..."
-        docker compose -f "$compose_file" down || true
+    # Check if Portainer is already running
+    if docker ps --format '{{.Names}}' | grep -q "^portainer$"; then
+        log_info "Portainer is already running, skipping deployment"
+        return 0
     fi
 
     # Deploy Portainer
@@ -137,11 +142,11 @@ deploy_portainer() {
 verify_docker() {
     log_info "Verifying Docker installation..."
 
-    if docker run --rm hello-world &>/dev/null; then
-        log_info "Docker verification successful"
+    if docker info &>/dev/null; then
+        log_info "Docker daemon is running and responsive"
         return 0
     else
-        log_error "Docker verification failed"
+        log_error "Docker daemon is not responding"
         return 1
     fi
 }

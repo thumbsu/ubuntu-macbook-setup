@@ -122,10 +122,9 @@ configure_swap() {
 
             echo "Swapfile created and activated"
         else
-            echo "Swapfile exists, activating..."
+            echo "Swapfile exists, ensuring it's active..."
             chmod 600 "$SWAPFILE"
-            mkswap "$SWAPFILE" 2>/dev/null || true
-            swapon "$SWAPFILE"
+            swapon "$SWAPFILE" 2>/dev/null || true
 
             if ! grep -q "$SWAPFILE" /etc/fstab; then
                 echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab
