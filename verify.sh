@@ -23,19 +23,28 @@ echo
 
 # 01. System & Base Packages
 echo "[01] System & Base Packages"
-for pkg in curl wget git vim htop tmux net-tools unzip jq tree; do
+for pkg in curl wget git vim htop tmux net-tools unzip jq tree dkms; do
     if command -v "$pkg" &>/dev/null || dpkg -l "$pkg" 2>/dev/null | grep -q "^ii"; then
         pass "$pkg"
     else
         fail "$pkg not found"
     fi
 done
+
+# Check linux-headers separately
+if dpkg -l "linux-headers-$(uname -r)" 2>/dev/null | grep -q "^ii"; then
+    pass "linux-headers-$(uname -r)"
+else
+    fail "linux-headers-$(uname -r) not found"
+fi
 echo
 
 # 02. MacBook Drivers
 echo "[02] MacBook Drivers"
-if dpkg -l 2>/dev/null | grep -q "bcmwl-kernel-source"; then
-    pass "Broadcom WiFi driver"
+if dpkg -l 2>/dev/null | grep -q "^ii.*bcmwl-kernel-source"; then
+    pass "Broadcom WiFi driver (bcmwl-kernel-source)"
+elif dpkg -l 2>/dev/null | grep -q "^ii.*broadcom-sta-dkms"; then
+    pass "Broadcom WiFi driver (broadcom-sta-dkms)"
 else
     fail "Broadcom WiFi driver not installed"
 fi
@@ -156,13 +165,29 @@ else
     fail "VS Code not installed"
 fi
 
-for tool in rg fdfind bat shellcheck; do
-    if command -v "$tool" &>/dev/null; then
-        pass "$tool"
-    else
-        fail "$tool not found"
-    fi
-done
+if command -v rg &>/dev/null; then
+    pass "ripgrep (rg)"
+else
+    fail "ripgrep not found"
+fi
+
+if command -v fdfind &>/dev/null || command -v fd &>/dev/null; then
+    pass "fd-find"
+else
+    fail "fd-find not found"
+fi
+
+if command -v batcat &>/dev/null || command -v bat &>/dev/null; then
+    pass "bat"
+else
+    fail "bat not found"
+fi
+
+if command -v shellcheck &>/dev/null; then
+    pass "shellcheck"
+else
+    fail "shellcheck not found"
+fi
 echo
 
 # 06. SSH

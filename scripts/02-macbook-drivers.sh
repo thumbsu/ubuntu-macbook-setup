@@ -18,17 +18,46 @@ log_warn() {
 install_broadcom_wifi() {
     log_info "Checking Broadcom WiFi driver..."
 
-    if dpkg -l | grep -q bcmwl-kernel-source; then
+    if dpkg -l | grep -q "^ii.*bcmwl-kernel-source"; then
         log_info "bcmwl-kernel-source already installed"
         return 0
     fi
 
+    if dpkg -l | grep -q "^ii.*broadcom-sta-dkms"; then
+        log_info "broadcom-sta-dkms already installed"
+        return 0
+    fi
+
+    # Ensure prerequisites for DKMS module build
+    log_info "Installing kernel headers and DKMS prerequisites..."
+    DEBIAN_FRONTEND=noninteractive apt install -y \
+        linux-headers-$(uname -r) linux-headers-generic dkms || true
+
+    # Fix any broken packages from previous attempts
+    apt --fix-broken install -y 2>/dev/null || true
+
     log_info "Installing Broadcom WiFi driver (bcmwl-kernel-source)..."
-    DEBIAN_FRONTEND=noninteractive apt install -y bcmwl-kernel-source || {
-        log_error "Failed to install bcmwl-kernel-source"
-        return 1
-    }
-    log_info "Broadcom WiFi driver installed successfully"
+    if DEBIAN_FRONTEND=noninteractive apt install -y bcmwl-kernel-source; then
+        log_info "bcmwl-kernel-source installed successfully"
+    else
+        log_warn "bcmwl-kernel-source failed, trying broadcom-sta-dkms as fallback..."
+        # Clean up broken state
+        apt --fix-broken install -y 2>/dev/null || true
+        dpkg --configure -a 2>/dev/null || true
+
+        if DEBIAN_FRONTEND=noninteractive apt install -y broadcom-sta-dkms; then
+            log_info "broadcom-sta-dkms installed successfully"
+            # Blacklist conflicting modules and load wl
+            echo "blacklist b43
+blacklist bcma
+blacklist ssb" > /etc/modprobe.d/broadcom-sta-blacklist.conf
+            modprobe wl 2>/dev/null || true
+        else
+            log_error "Both WiFi drivers failed to install"
+            apt --fix-broken install -y 2>/dev/null || true
+            return 1
+        fi
+    fi
 }
 
 install_fan_control() {
@@ -119,8 +148,11 @@ report_installation_status() {
     local installed_count=0
     local total_count=4
 
-    if dpkg -l | grep -q bcmwl-kernel-source; then
-        echo "  [OK] Broadcom WiFi driver"
+    if dpkg -l | grep -q "^ii.*bcmwl-kernel-source"; then
+        echo "  [OK] Broadcom WiFi driver (bcmwl-kernel-source)"
+        ((installed_count++))
+    elif dpkg -l | grep -q "^ii.*broadcom-sta-dkms"; then
+        echo "  [OK] Broadcom WiFi driver (broadcom-sta-dkms)"
         ((installed_count++))
     else
         echo "  [FAIL] Broadcom WiFi driver"

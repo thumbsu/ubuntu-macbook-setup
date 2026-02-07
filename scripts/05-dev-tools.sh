@@ -126,10 +126,28 @@ install_additional_tools() {
 
     apt-get install -y ripgrep fd-find bat shellcheck
 
+    # Create symlinks for Ubuntu-renamed binaries
+    local LOCAL_BIN="/home/$SUDO_USER/.local/bin"
+    mkdir -p "$LOCAL_BIN"
+
+    # bat -> batcat (Ubuntu renames due to package conflict)
+    if command -v batcat &>/dev/null && [ ! -f "$LOCAL_BIN/bat" ]; then
+        ln -s "$(which batcat)" "$LOCAL_BIN/bat"
+        echo "Created symlink: bat -> batcat"
+    fi
+
+    # fd -> fdfind (Ubuntu renames due to package conflict)
+    if command -v fdfind &>/dev/null && [ ! -f "$LOCAL_BIN/fd" ]; then
+        ln -s "$(which fdfind)" "$LOCAL_BIN/fd"
+        echo "Created symlink: fd -> fdfind"
+    fi
+
+    chown -R "$SUDO_USER:$SUDO_USER" "$LOCAL_BIN"
+
     echo "Installed tools:"
     echo "  ripgrep: $(rg --version | head -n1)"
-    echo "  fd: $(fdfind --version)"
-    echo "  bat: $(bat --version)"
+    echo "  fd-find: $(fdfind --version)"
+    echo "  bat: $(batcat --version | head -n1)"
     echo "  shellcheck: $(shellcheck --version | grep version:)"
     echo
 }

@@ -37,6 +37,8 @@ install_base_packages() {
         lsb-release
         tree
         jq
+        dkms
+        linux-headers-generic
     )
 
     log_info "Installing base packages: ${packages[*]}"
