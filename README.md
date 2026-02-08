@@ -39,19 +39,20 @@ Before starting, ensure you have:
 
 ### Step 1a: Download Ubuntu ISO
 
-Open Terminal on your Mac and download the Ubuntu 24.04 LTS ISO:
+Download the latest Ubuntu 24.04 LTS ISO from https://ubuntu.com/download/desktop (currently 24.04.3).
+
+Or use Terminal:
 
 ```bash
-# Create a downloads directory
 mkdir -p ~/ubuntu-setup
 cd ~/ubuntu-setup
 
-# Download Ubuntu 24.04 LTS (~ 4GB)
-curl -L "https://releases.ubuntu.com/24.04/ubuntu-24.04-desktop-amd64.iso" -o ubuntu-24.04-desktop-amd64.iso
+# Download latest Ubuntu 24.04 LTS point release
+curl -L "https://releases.ubuntu.com/24.04/ubuntu-24.04.3-desktop-amd64.iso" -o ubuntu-24.04.3-desktop-amd64.iso
 
 # Verify checksum (optional but recommended)
 curl -L "https://releases.ubuntu.com/24.04/SHA256SUMS" -o SHA256SUMS
-shasum -a 256 -c SHA256SUMS | grep ubuntu-24.04-desktop-amd64.iso
+shasum -a 256 -c SHA256SUMS | grep ubuntu-24.04.3-desktop-amd64.iso
 ```
 
 ### Step 1b: Write ISO to USB Drive
@@ -78,7 +79,7 @@ DISK="disk2"
 diskutil unmountDisk "/dev/disk${DISK}"
 
 # Write ISO to USB (this takes 5-10 minutes)
-sudo dd if=ubuntu-24.04-desktop-amd64.iso of="/dev/rdisk${DISK}" bs=4m
+sudo dd if=ubuntu-24.04.3-desktop-amd64.iso of="/dev/rdisk${DISK}" bs=4m
 
 # Verify completion (when it returns, you're done)
 # Eject the disk when prompted or manually:
