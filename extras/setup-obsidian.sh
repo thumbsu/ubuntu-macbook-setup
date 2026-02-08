@@ -71,7 +71,18 @@ else
     ok "Mount point exists: $MOUNT_DIR"
 fi
 
-# --- 5. Create systemd user service for auto-mount ---
+# --- 5. Enable fuse allow_other (required for --allow-other flag) ---
+if grep -q "^#user_allow_other" /etc/fuse.conf 2>/dev/null; then
+    sudo sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf
+    ok "Enabled user_allow_other in /etc/fuse.conf"
+elif grep -q "^user_allow_other" /etc/fuse.conf 2>/dev/null; then
+    ok "user_allow_other already enabled in /etc/fuse.conf"
+else
+    echo "user_allow_other" | sudo tee -a /etc/fuse.conf >/dev/null
+    ok "Added user_allow_other to /etc/fuse.conf"
+fi
+
+# --- 6. Create systemd user service for auto-mount ---
 mkdir -p "$SYSTEMD_DIR"
 
 if [[ -f "$SERVICE_FILE" ]]; then
@@ -109,7 +120,7 @@ EOF
     ok "Service enabled (will auto-mount at login)"
 fi
 
-# --- 6. Start mount if remote is configured ---
+# --- 7. Start mount if remote is configured ---
 if rclone listremotes 2>/dev/null | grep -q "^gdrive:"; then
     if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
         ok "Google Drive already mounted at $MOUNT_DIR"
@@ -125,7 +136,7 @@ if rclone listremotes 2>/dev/null | grep -q "^gdrive:"; then
     fi
 fi
 
-# --- 7. Print Obsidian vault instructions ---
+# --- 8. Print Obsidian vault instructions ---
 echo ""
 echo -e "${GREEN}=== Next Steps ===${NC}"
 echo ""
