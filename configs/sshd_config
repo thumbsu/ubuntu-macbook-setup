@@ -1,40 +1,27 @@
-# SSH Server Configuration for Ubuntu 24.04 LTS on MacBook Pro
-# /etc/ssh/sshd_config
+# Ubuntu MacBook Pro Home Server - SSH Configuration
+# Managed by ubuntu-macbook-setup
 
-# Connection
 Port 22
 AddressFamily any
 ListenAddress 0.0.0.0
 
 # Authentication
 PermitRootLogin no
-MaxAuthTries 5
-MaxSessions 10
 PubkeyAuthentication yes
+PasswordAuthentication yes
+KbdInteractiveAuthentication no
+UsePAM yes
 AuthorizedKeysFile .ssh/authorized_keys
 
-# Password auth enabled initially for first-time key setup.
-# After adding your public key, disable this:
-#   sudo sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-#   sudo systemctl restart sshd
-PasswordAuthentication yes
-PermitEmptyPasswords no
-KbdInteractiveAuthentication no
+# Security
+MaxAuthTries 5
+MaxSessions 10
+LoginGraceTime 60
 
-# Kerberos/GSSAPI
-KerberosAuthentication no
-GSSAPIAuthentication no
-
-# Environment
-UsePAM yes
+# Features
 X11Forwarding yes
 PrintMotd no
 AcceptEnv LANG LC_*
 
 # SFTP
 Subsystem sftp /usr/lib/openssh/sftp-server
-
-# Security hardening
-ClientAliveInterval 300
-ClientAliveCountMax 3
-LoginGraceTime 60

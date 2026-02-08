@@ -1,313 +1,324 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-# Verification script for Ubuntu 24.04 LTS MacBook Pro setup
-# Run: ./verify.sh (no sudo needed for most checks)
+# ============================================================
+# verify.sh - Installation verification for Ubuntu MacBook Pro Setup
+# Run after setup.sh + reboot to check everything is working
+# ============================================================
 
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+# Colors
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
 
 PASS=0
 FAIL=0
 WARN=0
 
-pass() { echo -e "  ${GREEN}✓${NC} $1"; ((PASS++)); }
-fail() { echo -e "  ${RED}✗${NC} $1"; ((FAIL++)); }
-warn() { echo -e "  ${YELLOW}!${NC} $1"; ((WARN++)); }
+pass() { echo -e "  ${GREEN}✓ PASS${NC}  $*"; ((PASS++)); }
+fail() { echo -e "  ${RED}✗ FAIL${NC}  $*"; ((FAIL++)); }
+skip() { echo -e "  ${YELLOW}~ WARN${NC}  $*"; ((WARN++)); }
 
-echo "======================================"
-echo " Ubuntu MacBook Setup Verification"
-echo "======================================"
-echo
-
-# 01. System & Base Packages
-echo "[01] System & Base Packages"
-for pkg in curl wget git vim htop tmux net-tools unzip jq tree dkms; do
-    if command -v "$pkg" &>/dev/null || dpkg -l "$pkg" 2>/dev/null | grep -q "^ii"; then
-        pass "$pkg"
+check_pkg() {
+    if dpkg -l "$1" 2>/dev/null | grep -q "^ii"; then
+        pass "$1 installed"
     else
-        fail "$pkg not found"
+        fail "$1 not installed"
     fi
+}
+
+check_service() {
+    if systemctl is-active --quiet "$1" 2>/dev/null; then
+        pass "$1 service active"
+    else
+        fail "$1 service not active"
+    fi
+}
+
+echo -e "${BOLD}"
+echo "╔══════════════════════════════════════════╗"
+echo "║  Ubuntu MacBook Pro Setup - Verification ║"
+echo "╚══════════════════════════════════════════╝"
+echo -e "${NC}"
+
+# --- 01: System Update & Base Packages ---
+echo -e "\n${BLUE}[01] System Update & Base Packages${NC}"
+for pkg in curl wget git vim htop tmux net-tools build-essential unzip dkms; do
+    check_pkg "$pkg"
 done
 
-# Check linux-headers separately
-if dpkg -l "linux-headers-$(uname -r)" 2>/dev/null | grep -q "^ii"; then
-    pass "linux-headers-$(uname -r)"
+# Kernel headers
+KVER=$(uname -r)
+if dpkg -l "linux-headers-${KVER}" 2>/dev/null | grep -q "^ii"; then
+    pass "linux-headers-${KVER} installed"
 else
-    fail "linux-headers-$(uname -r) not found"
-fi
-echo
-
-# 02. MacBook Drivers
-echo "[02] MacBook Drivers"
-if dpkg -l 2>/dev/null | grep -q "^ii.*bcmwl-kernel-source"; then
-    pass "Broadcom WiFi driver (bcmwl-kernel-source)"
-elif dpkg -l 2>/dev/null | grep -q "^ii.*broadcom-sta-dkms"; then
-    pass "Broadcom WiFi driver (broadcom-sta-dkms)"
-else
-    fail "Broadcom WiFi driver not installed"
+    fail "linux-headers-${KVER} not installed"
 fi
 
-if systemctl is-active --quiet mbpfan 2>/dev/null; then
-    pass "mbpfan (fan control) running"
-elif systemctl is-enabled --quiet mbpfan 2>/dev/null; then
-    warn "mbpfan enabled but not running"
+# --- 02: System Tweaks ---
+echo -e "\n${BLUE}[02] System Tweaks${NC}"
+
+# X11 / Wayland
+if [[ -f /etc/gdm3/custom.conf ]]; then
+    if grep -q "WaylandEnable=false" /etc/gdm3/custom.conf; then
+        pass "Wayland disabled (X11 forced)"
+    else
+        fail "Wayland not disabled"
+    fi
 else
-    fail "mbpfan not installed/enabled"
+    skip "gdm3 custom.conf not found"
 fi
 
-if systemctl is-active --quiet thermald 2>/dev/null; then
-    pass "thermald running"
+# Check current session type
+if [[ "${XDG_SESSION_TYPE:-}" == "x11" ]]; then
+    pass "Current session is X11"
+elif [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
+    fail "Current session is Wayland (should be X11)"
 else
-    fail "thermald not running"
+    skip "Cannot determine session type (running from TTY?)"
 fi
 
-if systemctl is-active --quiet tlp 2>/dev/null; then
-    pass "tlp running"
-elif systemctl is-enabled --quiet tlp 2>/dev/null; then
-    pass "tlp enabled (runs on battery events)"
+# Lid settings
+if [[ -f /etc/systemd/logind.conf ]]; then
+    if grep -q "HandleLidSwitch=ignore" /etc/systemd/logind.conf; then
+        pass "Lid switch set to ignore"
+    else
+        fail "Lid switch not configured"
+    fi
 else
-    fail "tlp not installed"
-fi
-echo
-
-# 03. Korean Input
-echo "[03] Korean Input (fcitx5)"
-if dpkg -l 2>/dev/null | grep -q "fcitx5-hangul"; then
-    pass "fcitx5-hangul installed"
-else
-    fail "fcitx5-hangul not installed"
+    fail "/etc/systemd/logind.conf not found"
 fi
 
-if grep -q "GTK_IM_MODULE=fcitx" /etc/environment 2>/dev/null; then
-    pass "GTK_IM_MODULE set"
+# Timezone
+CURRENT_TZ=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "unknown")
+if [[ "$CURRENT_TZ" == "Asia/Seoul" ]]; then
+    pass "Timezone: Asia/Seoul"
 else
-    fail "GTK_IM_MODULE not configured"
+    fail "Timezone: $CURRENT_TZ (expected Asia/Seoul)"
 fi
 
-if grep -q "QT_IM_MODULE=fcitx" /etc/environment 2>/dev/null; then
-    pass "QT_IM_MODULE set"
+# Swap
+if swapon --show 2>/dev/null | grep -q "/swapfile"; then
+    SWAP_SIZE=$(swapon --show --noheadings --bytes 2>/dev/null | awk '{print $3}')
+    pass "Swap active (/swapfile, $(numfmt --to=iec "$SWAP_SIZE" 2>/dev/null || echo "${SWAP_SIZE}B"))"
 else
-    fail "QT_IM_MODULE not configured"
+    skip "No swapfile found (may use partition swap)"
 fi
 
-if [ -f /etc/xdg/autostart/fcitx5.desktop ]; then
-    pass "fcitx5 autostart entry"
-else
-    fail "fcitx5 autostart not configured"
-fi
-echo
+# --- 03: MacBook Drivers ---
+echo -e "\n${BLUE}[03] MacBook Drivers${NC}"
 
-# 04. Docker
-echo "[04] Docker & Portainer"
+# WiFi blacklist
+if [[ -f /etc/modprobe.d/blacklist-broadcom-wireless.conf ]]; then
+    pass "Broadcom wireless blacklist exists"
+else
+    fail "Broadcom wireless blacklist missing"
+fi
+
+# WiFi driver module
+if lsmod 2>/dev/null | grep -q "^wl "; then
+    pass "wl WiFi driver loaded"
+else
+    fail "wl WiFi driver not loaded"
+fi
+
+# WiFi connectivity
+if command -v nmcli &>/dev/null; then
+    WIFI_STATE=$(nmcli -t -f TYPE,STATE device 2>/dev/null | grep "^wifi:" | cut -d: -f2 || echo "unknown")
+    if [[ "$WIFI_STATE" == "connected" ]]; then
+        pass "WiFi connected"
+    elif [[ "$WIFI_STATE" == "disconnected" ]]; then
+        skip "WiFi available but not connected"
+    else
+        fail "WiFi state: $WIFI_STATE"
+    fi
+else
+    skip "nmcli not available"
+fi
+
+# Fan control
+check_service "mbpfan"
+
+# Power management
+check_service "tlp"
+
+# --- 04: Claude Code ---
+echo -e "\n${BLUE}[04] Claude Code${NC}"
+
+# Claude Code may be installed for the regular user, not root
+REAL_USER="${SUDO_USER:-$USER}"
+REAL_HOME=$(eval echo "~${REAL_USER}")
+if [[ -x "${REAL_HOME}/.local/bin/claude" ]]; then
+    CLAUDE_VER=$("${REAL_HOME}/.local/bin/claude" --version 2>/dev/null || echo "unknown")
+    pass "Claude Code installed (${CLAUDE_VER})"
+elif command -v claude &>/dev/null; then
+    CLAUDE_VER=$(claude --version 2>/dev/null || echo "unknown")
+    pass "Claude Code installed (${CLAUDE_VER})"
+else
+    skip "Claude Code not installed (optional)"
+fi
+
+# --- 05: Korean Input ---
+echo -e "\n${BLUE}[05] Korean Input${NC}"
+
+check_pkg "fcitx5"
+check_pkg "fcitx5-hangul"
+
+# Environment variables
+if [[ -f /etc/environment ]]; then
+    for var in GTK_IM_MODULE QT_IM_MODULE XMODIFIERS; do
+        if grep -q "^${var}=" /etc/environment; then
+            pass "${var} set in /etc/environment"
+        else
+            fail "${var} not set in /etc/environment"
+        fi
+    done
+else
+    fail "/etc/environment not found"
+fi
+
+# --- 06: Keyboard Remap ---
+echo -e "\n${BLUE}[06] Keyboard Remap${NC}"
+
+# Toshy
+if [[ -d "${REAL_HOME}/toshy" ]]; then
+    pass "Toshy installed (${REAL_HOME}/toshy)"
+else
+    skip "Toshy not installed (optional)"
+fi
+
+# Fn key
+if [[ -f /etc/modprobe.d/hid_apple.conf ]]; then
+    if grep -q "fnmode=2" /etc/modprobe.d/hid_apple.conf; then
+        pass "Fn key mode set (fnmode=2)"
+    else
+        fail "Fn key mode not configured correctly"
+    fi
+else
+    fail "hid_apple.conf not found"
+fi
+
+# --- 07: Docker ---
+echo -e "\n${BLUE}[07] Docker${NC}"
+
 if command -v docker &>/dev/null; then
-    pass "Docker installed ($(docker --version 2>/dev/null | cut -d' ' -f3 | tr -d ','))"
+    if docker info &>/dev/null; then
+        pass "Docker Engine running"
+        DOCKER_VER=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "unknown")
+        pass "Docker version: ${DOCKER_VER}"
+    else
+        fail "Docker installed but not running"
+    fi
 else
     fail "Docker not installed"
 fi
 
-if docker info &>/dev/null 2>&1; then
-    pass "Docker daemon running"
-elif sudo docker info &>/dev/null 2>&1; then
-    pass "Docker daemon running (needs sudo)"
+# Docker Compose
+if docker compose version &>/dev/null; then
+    pass "Docker Compose available"
 else
-    fail "Docker daemon not responding"
+    fail "Docker Compose not available"
 fi
 
-if groups "${USER}" | grep -q '\bdocker\b'; then
-    pass "User in docker group"
-else
-    warn "User not in docker group (need logout/login)"
-fi
-
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^portainer$"; then
-    pass "Portainer running"
-elif sudo docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^portainer$"; then
+# Portainer
+if docker ps 2>/dev/null | grep -q portainer; then
     pass "Portainer running"
 else
     fail "Portainer not running"
 fi
-echo
 
-# 05. Dev Tools
-echo "[05] Development Tools"
-if command -v git &>/dev/null; then
-    pass "Git $(git --version | cut -d' ' -f3)"
+# Docker group
+if id "$REAL_USER" 2>/dev/null | grep -q "(docker)"; then
+    pass "${REAL_USER} in docker group"
 else
-    fail "Git not installed"
+    fail "${REAL_USER} not in docker group"
 fi
 
-NVM_DIR="$HOME/.nvm"
-if [ -d "$NVM_DIR" ]; then
-    pass "nvm installed"
-    # Source nvm to check node
-    export NVM_DIR
-    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-    if command -v node &>/dev/null; then
-        pass "Node.js $(node --version)"
+# --- 08: SSH & Firewall ---
+echo -e "\n${BLUE}[08] SSH & Firewall${NC}"
+
+# SSH
+check_service "sshd"
+if [[ -f /etc/ssh/sshd_config ]]; then
+    if grep -q "PermitRootLogin no" /etc/ssh/sshd_config; then
+        pass "Root login disabled"
     else
-        warn "nvm installed but no Node.js version active"
+        fail "Root login not disabled"
+    fi
+    if grep -q "KbdInteractiveAuthentication no" /etc/ssh/sshd_config; then
+        pass "KbdInteractiveAuthentication disabled"
+    else
+        skip "KbdInteractiveAuthentication not set"
+    fi
+    # Check for deprecated option
+    if grep -q "ChallengeResponseAuthentication" /etc/ssh/sshd_config; then
+        fail "Deprecated ChallengeResponseAuthentication found in sshd_config"
+    else
+        pass "No deprecated SSH options"
     fi
 else
-    fail "nvm not installed"
+    fail "/etc/ssh/sshd_config not found"
 fi
 
-if command -v python3 &>/dev/null; then
-    pass "Python $(python3 --version | cut -d' ' -f2)"
-else
-    fail "Python3 not installed"
-fi
+# UFW
+if command -v ufw &>/dev/null; then
+    UFW_STATUS=$(ufw status 2>/dev/null | head -1 || echo "unknown")
+    if echo "$UFW_STATUS" | grep -q "active"; then
+        pass "UFW active"
+    else
+        fail "UFW not active"
+    fi
 
-if command -v code &>/dev/null; then
-    pass "VS Code installed"
-else
-    fail "VS Code not installed"
-fi
-
-if command -v rg &>/dev/null; then
-    pass "ripgrep (rg)"
-else
-    fail "ripgrep not found"
-fi
-
-if command -v fdfind &>/dev/null || command -v fd &>/dev/null; then
-    pass "fd-find"
-else
-    fail "fd-find not found"
-fi
-
-if command -v batcat &>/dev/null || command -v bat &>/dev/null; then
-    pass "bat"
-else
-    fail "bat not found"
-fi
-
-if command -v shellcheck &>/dev/null; then
-    pass "shellcheck"
-else
-    fail "shellcheck not found"
-fi
-echo
-
-# 06. SSH
-echo "[06] SSH Server"
-if systemctl is-active --quiet ssh 2>/dev/null || systemctl is-active --quiet sshd 2>/dev/null; then
-    pass "SSH service running"
-else
-    fail "SSH service not running"
-fi
-
-if [ -f "$HOME/.ssh/id_ed25519" ]; then
-    pass "SSH keypair exists"
-else
-    warn "No SSH keypair found"
-fi
-
-if grep -q "^PubkeyAuthentication yes" /etc/ssh/sshd_config 2>/dev/null; then
-    pass "Public key auth enabled"
-else
-    warn "PubkeyAuthentication not explicitly set"
-fi
-
-local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-if [ -n "$local_ip" ]; then
-    pass "SSH accessible at: ${local_ip}:22"
-fi
-echo
-
-# 07. Firewall
-echo "[07] UFW Firewall"
-if sudo ufw status 2>/dev/null | grep -q "Status: active"; then
-    pass "UFW active"
-    for port in "22/tcp" "80/tcp" "443/tcp" "9443/tcp"; do
-        if sudo ufw status 2>/dev/null | grep -q "$port.*ALLOW"; then
-            pass "Port $port allowed"
+    for rule in "22/tcp" "80/tcp" "443/tcp" "9443/tcp"; do
+        if ufw status 2>/dev/null | grep -q "$rule"; then
+            pass "UFW rule: ${rule} ALLOW"
         else
-            fail "Port $port not allowed"
+            fail "UFW rule missing: ${rule}"
         fi
     done
 else
-    fail "UFW not active"
+    fail "UFW not installed"
 fi
-echo
 
-# 08. System Tweaks
-echo "[08] System Tweaks"
-if grep -q "^HandleLidSwitch=ignore" /etc/systemd/logind.conf 2>/dev/null; then
-    pass "Lid switch: ignore (won't sleep)"
+# --- Forbidden patterns check ---
+echo -e "\n${BLUE}[!!] Forbidden Pattern Check${NC}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Check for forbidden patterns in all scripts
+FORBIDDEN_FOUND=0
+if grep -r "systemctl restart systemd-logind" "${SCRIPT_DIR}/scripts/" "${SCRIPT_DIR}/setup.sh" 2>/dev/null; then
+    fail "FORBIDDEN: 'systemctl restart systemd-logind' found in scripts!"
+    FORBIDDEN_FOUND=1
+fi
+if grep -r "ufw --force reset" "${SCRIPT_DIR}/scripts/" "${SCRIPT_DIR}/setup.sh" 2>/dev/null; then
+    fail "FORBIDDEN: 'ufw --force reset' found in scripts!"
+    FORBIDDEN_FOUND=1
+fi
+if grep -r "ChallengeResponseAuthentication" "${SCRIPT_DIR}/scripts/" "${SCRIPT_DIR}/setup.sh" "${SCRIPT_DIR}/configs/" 2>/dev/null; then
+    fail "FORBIDDEN: 'ChallengeResponseAuthentication' found!"
+    FORBIDDEN_FOUND=1
+fi
+if [[ $FORBIDDEN_FOUND -eq 0 ]]; then
+    pass "No forbidden patterns found"
+fi
+
+# --- Summary ---
+echo ""
+echo -e "${BOLD}═══ Verification Summary ═══════════════════${NC}"
+echo ""
+echo -e "  ${GREEN}✓ PASS:${NC}  ${PASS}"
+echo -e "  ${RED}✗ FAIL:${NC}  ${FAIL}"
+echo -e "  ${YELLOW}~ WARN:${NC}  ${WARN}"
+echo ""
+
+echo "  Total: $((PASS + FAIL + WARN))"
+echo ""
+if [[ $FAIL -eq 0 ]]; then
+    echo -e "  ${GREEN}${BOLD}All checks passed!${NC}"
+elif [[ $FAIL -le 3 ]]; then
+    echo -e "  ${YELLOW}${BOLD}Mostly good, ${FAIL} issue(s) to review.${NC}"
 else
-    fail "Lid switch not configured"
+    echo -e "  ${RED}${BOLD}${FAIL} issues found. Review failed checks above.${NC}"
 fi
+echo ""
 
-current_tz=$(timedatectl show --property=Timezone --value 2>/dev/null)
-if [ "$current_tz" = "Asia/Seoul" ]; then
-    pass "Timezone: Asia/Seoul"
-else
-    fail "Timezone: $current_tz (expected Asia/Seoul)"
-fi
-
-if swapon --show 2>/dev/null | grep -q "/swapfile"; then
-    swap_size=$(swapon --show 2>/dev/null | grep "/swapfile" | awk '{print $3}')
-    pass "Swap active: $swap_size"
-else
-    fail "Swap not active"
-fi
-
-if ! systemctl is-enabled --quiet unattended-upgrades 2>/dev/null; then
-    pass "Auto-updates disabled"
-else
-    warn "Auto-updates still enabled"
-fi
-
-if grep -q "^WaylandEnable=false" /etc/gdm3/custom.conf 2>/dev/null; then
-    pass "Wayland disabled (using X11)"
-else
-    warn "Wayland may still be enabled"
-fi
-
-session_type="${XDG_SESSION_TYPE:-unknown}"
-if [ "$session_type" = "x11" ]; then
-    pass "Current session: X11"
-elif [ "$session_type" = "wayland" ]; then
-    warn "Current session: Wayland (should be X11 after reboot)"
-else
-    warn "Session type: $session_type"
-fi
-echo
-
-# 09. Keyboard Remap
-echo "[09] Keyboard Remap (Toshy)"
-TOSHY_DIR="$HOME/.local/share/toshy"
-if [ -d "$TOSHY_DIR" ]; then
-    pass "Toshy installed at $TOSHY_DIR"
-else
-    fail "Toshy not installed"
-fi
-
-if [ -f /etc/modprobe.d/hid_apple.conf ] && grep -q "fnmode=2" /etc/modprobe.d/hid_apple.conf 2>/dev/null; then
-    pass "Fn key mode: F1-F12 default"
-else
-    fail "Fn key mode not configured"
-fi
-echo
-
-# Summary
-echo "======================================"
-echo " Summary"
-echo "======================================"
-echo -e " ${GREEN}PASS${NC}: $PASS"
-echo -e " ${RED}FAIL${NC}: $FAIL"
-echo -e " ${YELLOW}WARN${NC}: $WARN"
-echo
-
-if [ "$FAIL" -eq 0 ]; then
-    echo -e "${GREEN}All checks passed!${NC}"
-elif [ "$FAIL" -le 3 ]; then
-    echo -e "${YELLOW}Mostly good, a few items need attention.${NC}"
-else
-    echo -e "${RED}Several checks failed. Re-run the setup or check logs.${NC}"
-    echo "  Log: /var/log/ubuntu-setup.log"
-    echo "  Re-run: sudo ./setup.sh"
-fi
-echo
+exit $FAIL
