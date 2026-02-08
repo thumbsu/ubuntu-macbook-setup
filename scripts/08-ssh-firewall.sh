@@ -57,15 +57,22 @@ if [[ -f "$SOURCE_SSHD_CONFIG" ]]; then
         cp "$SOURCE_SSHD_CONFIG" "$SSHD_CONFIG"
         ok "Updated $SSHD_CONFIG"
 
+        # Ensure sshd prerequisites exist (needed for sshd -t validation)
+        if ! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1; then
+            info "Generating SSH host keys..."
+            ssh-keygen -A
+        fi
+        mkdir -p /run/sshd
+
         # Validate configuration
-        if sshd -t 2>/dev/null; then
-            ok "SSH configuration is valid"
-        else
+        SSHD_ERRORS=$(sshd -t 2>&1) || {
             err "SSH configuration validation failed!"
+            err "$SSHD_ERRORS"
             warn "Restoring backup..."
             cp "$BACKUP_FILE" "$SSHD_CONFIG"
             exit 1
-        fi
+        }
+        ok "SSH configuration is valid"
     fi
 else
     warn "$SOURCE_SSHD_CONFIG not found"

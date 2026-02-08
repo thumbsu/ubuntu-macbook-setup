@@ -13,9 +13,9 @@ PASS=0
 FAIL=0
 WARN=0
 
-pass() { echo -e "  ${GREEN}✓ PASS${NC}  $*"; ((PASS++)); }
-fail() { echo -e "  ${RED}✗ FAIL${NC}  $*"; ((FAIL++)); }
-skip() { echo -e "  ${YELLOW}~ WARN${NC}  $*"; ((WARN++)); }
+pass() { echo -e "  ${GREEN}✓ PASS${NC}  $*"; ((PASS++)) || true; }
+fail() { echo -e "  ${RED}✗ FAIL${NC}  $*"; ((FAIL++)) || true; }
+skip() { echo -e "  ${YELLOW}~ WARN${NC}  $*"; ((WARN++)) || true; }
 
 check_pkg() {
     if dpkg -l "$1" 2>/dev/null | grep -q "^ii"; then
@@ -114,7 +114,7 @@ else
 fi
 
 # WiFi driver module
-if lsmod 2>/dev/null | grep -q "^wl "; then
+if grep -q "^wl " /proc/modules 2>/dev/null; then
     pass "wl WiFi driver loaded"
 else
     fail "wl WiFi driver not loaded"
