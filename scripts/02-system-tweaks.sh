@@ -94,15 +94,15 @@ for setting in "${LID_SETTINGS[@]}"; do
     if grep -q "^#${key}=" "$LOGIND_CONFIG"; then
         # Replace commented line
         sed -i "s/^#${key}=.*/${setting}/" "$LOGIND_CONFIG"
-        ((LID_CHANGES++))
+        ((LID_CHANGES++)) || true
     elif grep -q "^${key}=" "$LOGIND_CONFIG"; then
         # Replace existing uncommented line with different value
         sed -i "s/^${key}=.*/${setting}/" "$LOGIND_CONFIG"
-        ((LID_CHANGES++))
+        ((LID_CHANGES++)) || true
     else
         # Add new line
         echo "$setting" >> "$LOGIND_CONFIG"
-        ((LID_CHANGES++))
+        ((LID_CHANGES++)) || true
     fi
 done
 
@@ -181,14 +181,14 @@ UNATTENDED_DISABLED=0
 if systemctl is-active --quiet unattended-upgrades 2>/dev/null; then
     systemctl disable --now unattended-upgrades
     CHANGES_MADE+=("Disabled unattended-upgrades service")
-    ((UNATTENDED_DISABLED++))
+    ((UNATTENDED_DISABLED++)) || true
 fi
 
 # Check if package is installed
 if is_installed unattended-upgrades; then
     DEBIAN_FRONTEND=noninteractive apt remove -y unattended-upgrades
     CHANGES_MADE+=("Removed unattended-upgrades package")
-    ((UNATTENDED_DISABLED++))
+    ((UNATTENDED_DISABLED++)) || true
 fi
 
 if [[ $UNATTENDED_DISABLED -eq 0 ]]; then
