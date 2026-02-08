@@ -15,6 +15,101 @@ err()   { echo -e "${RED}[ERROR]${NC} $*"; }
 
 is_installed() { dpkg -l "$1" 2>/dev/null | grep -q "^ii"; }
 
+# Patch broadcom-sta source for modern kernel compatibility
+patch_broadcom_source() {
+    # shellcheck disable=SC2086
+    local bsta_dir makefile linuxver_h patched=false
+    bsta_dir=$(echo /usr/src/broadcom-sta-*)
+    if [[ ! -d "$bsta_dir" ]]; then
+        warn "broadcom-sta source directory not found"
+        return 1
+    fi
+
+    # Patch 1: Rename deprecated kbuild variables (kernel 6.12+)
+    makefile="$bsta_dir/Makefile"
+    if [[ -f "$makefile" ]] && grep -q "EXTRA_CFLAGS" "$makefile"; then
+        info "Patching Makefile: EXTRA_CFLAGS -> ccflags-y (kernel 6.12+)"
+        sed -i 's/EXTRA_CFLAGS/ccflags-y/g' "$makefile"
+        patched=true
+    fi
+    if [[ -f "$makefile" ]] && grep -q "EXTRA_LDFLAGS" "$makefile"; then
+        info "Patching Makefile: EXTRA_LDFLAGS -> ldflags-y (kernel 6.12+)"
+        sed -i 's/EXTRA_LDFLAGS/ldflags-y/g' "$makefile"
+        patched=true
+    fi
+
+    # Patch 2: Timer API compat (kernel 6.15+ removed from_timer/del_timer/del_timer_sync)
+    linuxver_h="$bsta_dir/src/include/linuxver.h"
+    if [[ -f "$linuxver_h" ]] && ! grep -q "timer_delete" "$linuxver_h"; then
+        info "Patching linuxver.h: timer API compat (kernel 6.15+)"
+        # Remove final #endif (header guard close), append compat block, re-add #endif
+        sed -i '$ d' "$linuxver_h"
+        {
+            echo ''
+            echo '/* Compat: kernel 6.15+ removed legacy timer APIs */'
+            echo '#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)'
+            echo '#define from_timer(var, callback_timer, timer_fieldname) \'
+            echo '	timer_container_of(var, callback_timer, timer_fieldname)'
+            echo '#define del_timer(t) timer_delete(t)'
+            echo '#define del_timer_sync(t) timer_delete_sync(t)'
+            echo '#endif'
+            echo ''
+            echo '#endif'
+        } >> "$linuxver_h"
+        patched=true
+    fi
+
+    # Patch 3: Disable -Werror for implicit-fallthrough (GCC treats WL_DBG macro
+    # fallthrough as a warning; kernel build flags promote it to error)
+    if [[ -f "$makefile" ]] && ! grep -q "Wno-error" "$makefile"; then
+        info "Patching Makefile: disable -Werror=implicit-fallthrough"
+        sed -i 's/^\(EXTRA_CFLAGS\|ccflags-y\) *:= *$/\1 := -Wno-error=implicit-fallthrough/' "$makefile"
+        patched=true
+    fi
+
+    # Patch 4: cfg80211 API changes (kernel 6.17+ added radio_idx param to
+    # set_wiphy_params, set_tx_power, and get_tx_power in struct cfg80211_ops)
+    local cfg80211_file="$bsta_dir/src/wl/sys/wl_cfg80211_hybrid.c"
+    if [[ -f "$cfg80211_file" ]] && ! grep -q "radio_idx" "$cfg80211_file"; then
+        local kver_major kver_minor
+        kver_major=$(uname -r | cut -d. -f1)
+        kver_minor=$(uname -r | cut -d. -f2)
+        if [[ "$kver_major" -ge 7 ]] || { [[ "$kver_major" -eq 6 ]] && [[ "$kver_minor" -ge 17 ]]; }; then
+            info "Patching wl_cfg80211_hybrid.c: cfg80211 API (kernel 6.17+)"
+            # get_tx_power: insert "int /*radio_idx*/," and add 6.17 #if guard
+            perl -i -0777 -pe '
+                s{(\#if LINUX_VERSION_CODE >= KERNEL_VERSION\(6, 14, 0\)\n)(static s32 wl_cfg80211_get_tx_power\(struct wiphy \*wiphy, struct wireless_dev \*wdev, )(u32 /\*link_id\*/, s32 \*dbm\))(;?)}{#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)\n${2}int /*radio_idx*/, ${3}${4}\n#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)\n${2}${3}${4}}g;
+            ' "$cfg80211_file"
+            # set_tx_power: insert "int radio_idx," and add 6.17 #if guard
+            perl -i -0777 -pe '
+                s{(\#if LINUX_VERSION_CODE >= KERNEL_VERSION\(3, 8, 0\)\nstatic s32\nwl_cfg80211_set_tx_power\(struct wiphy \*wiphy, struct wireless_dev \*wdev,\n)(\s+)(enum nl80211_tx_power_setting type, s32 mbm\))(;?)}{#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)\nstatic s32\nwl_cfg80211_set_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,\n${2}int radio_idx, ${3}${4}\n#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)\nstatic s32\nwl_cfg80211_set_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,\n${2}${3}${4}}g;
+            ' "$cfg80211_file"
+            # set_wiphy_params: insert "int radio_idx," and add 6.17 #if guard
+            perl -i -0777 -pe '
+                s{(static s32 wl_cfg80211_set_wiphy_params\(struct wiphy \*wiphy, )(u32 changed\))(;?)}{#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)\n${1}int radio_idx, ${2}${3}\n#else\n${1}${2}${3}\n#endif}g;
+            ' "$cfg80211_file"
+            patched=true
+        fi
+    fi
+
+    if [[ "$patched" == true ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# Purge broken broadcom packages so they don't poison apt operations
+purge_broken_broadcom() {
+    local pkg
+    for pkg in bcmwl-kernel-source broadcom-sta-dkms; do
+        if dpkg -l "$pkg" 2>/dev/null | grep -qE "^i[FHU]"; then
+            warn "Purging broken $pkg..."
+            dpkg --purge --force-remove-reinstreq "$pkg" 2>/dev/null || true
+        fi
+    done
+    dkms remove broadcom-sta --all 2>/dev/null || true
+}
+
 # Check for root
 if [[ $EUID -ne 0 ]]; then
    err "This script must be run as root (use sudo)"
@@ -33,12 +128,16 @@ info "════════════════════════�
 info "Configuring WiFi Driver (Broadcom BCM4360)"
 info "════════════════════════════════════════════════════════════"
 
+# 1-pre. Purge broken broadcom packages BEFORE any apt operations
+# A half-configured broadcom-sta-dkms poisons ALL apt commands
+purge_broken_broadcom
+
 # 1a. Verify linux-headers
 info "Verifying kernel headers..."
 CURRENT_KERNEL=$(uname -r)
 HEADERS_PKG="linux-headers-${CURRENT_KERNEL}"
 
-if ! dpkg -l | grep -q "^ii.*${HEADERS_PKG}"; then
+if ! is_installed "$HEADERS_PKG"; then
     warn "Kernel headers not found, installing..."
     DEBIAN_FRONTEND=noninteractive apt install -y "$HEADERS_PKG" linux-headers-generic || {
         err "Failed to install kernel headers"
@@ -84,43 +183,65 @@ else
     ok "Blacklist file created"
 fi
 
-# 1c. Install broadcom-sta-dkms (PRIMARY driver)
+# 1c. Install broadcom-sta-dkms (PRIMARY driver for BCM4360)
 info "Installing Broadcom WiFi driver (broadcom-sta-dkms)..."
 
-if is_installed broadcom-sta-dkms; then
+WIFI_INSTALLED=false
+
+# Already properly installed?
+if is_installed broadcom-sta-dkms && dkms status broadcom-sta 2>/dev/null | grep -q "installed"; then
     ALREADY_CONFIGURED+=("broadcom-sta-dkms already installed")
-    ok "Primary WiFi driver already installed"
-else
-    info "Installing broadcom-sta-dkms (primary driver for Ubuntu 24.04)..."
+    ok "Primary WiFi driver already installed and built"
+    WIFI_INSTALLED=true
+fi
 
-    # Try to install
-    if DEBIAN_FRONTEND=noninteractive apt install -y broadcom-sta-dkms; then
-        CHANGES_MADE+=("Installed broadcom-sta-dkms WiFi driver")
-        ok "broadcom-sta-dkms installed successfully"
-    else
-        warn "broadcom-sta-dkms installation failed, attempting recovery..."
-
-        # Try to fix broken packages
-        dpkg --configure -a
-        apt install -f -y
-
-        # Try again
-        if DEBIAN_FRONTEND=noninteractive apt install -y broadcom-sta-dkms; then
-            CHANGES_MADE+=("Installed broadcom-sta-dkms after recovery")
-            ok "broadcom-sta-dkms installed after recovery"
-        else
-            # 1d. Fallback to bcmwl-kernel-source
-            warn "broadcom-sta-dkms failed, trying fallback driver (bcmwl-kernel-source)..."
-
-            if DEBIAN_FRONTEND=noninteractive apt install -y bcmwl-kernel-source; then
-                CHANGES_MADE+=("Installed bcmwl-kernel-source (fallback WiFi driver)")
-                ok "Fallback WiFi driver installed"
-            else
-                err "Failed to install both WiFi drivers. Manual intervention required."
-                err "Try: sudo apt install broadcom-sta-dkms bcmwl-kernel-source"
-                exit 1
-            fi
+if [[ "$WIFI_INSTALLED" == false ]]; then
+    # Clean slate: purge any existing broadcom packages
+    for pkg in bcmwl-kernel-source broadcom-sta-dkms; do
+        if dpkg -l "$pkg" 2>/dev/null | grep -q "^[ir]"; then
+            dpkg --purge --force-remove-reinstreq "$pkg" 2>/dev/null || true
         fi
+    done
+    dkms remove broadcom-sta --all 2>/dev/null || true
+
+    # Get the .deb file (from cache or download)
+    DEB_FILE=$(find /var/cache/apt/archives/ -name "broadcom-sta-dkms_*.deb" -type f 2>/dev/null | head -1)
+    if [[ -z "$DEB_FILE" ]]; then
+        info "Downloading broadcom-sta-dkms..."
+        DEBIAN_FRONTEND=noninteractive apt install -y --download-only broadcom-sta-dkms 2>/dev/null || true
+        DEB_FILE=$(find /var/cache/apt/archives/ -name "broadcom-sta-dkms_*.deb" -type f 2>/dev/null | head -1)
+    fi
+
+    if [[ -n "$DEB_FILE" ]]; then
+        # Step 1: Unpack ONLY (installs files, does NOT run post-inst / DKMS build)
+        info "Unpacking broadcom-sta-dkms (without triggering DKMS build)..."
+        dpkg --unpack "$DEB_FILE"
+
+        # Step 2: Patch BEFORE DKMS build
+        patch_broadcom_source || true
+
+        # Step 3: Configure (post-inst triggers DKMS build with patched source)
+        info "Configuring broadcom-sta-dkms (DKMS build with patched source)..."
+        if dpkg --configure broadcom-sta-dkms; then
+            CHANGES_MADE+=("Installed broadcom-sta-dkms with kernel compat patch")
+            ok "broadcom-sta-dkms installed with kernel compatibility patch"
+            WIFI_INSTALLED=true
+        else
+            err "broadcom-sta-dkms DKMS build failed after patching."
+            info "Build log (last 20 lines):"
+            # shellcheck disable=SC2086
+            tail -20 /var/lib/dkms/broadcom-sta/*/build/make.log 2>/dev/null || true
+            warn "Purging failed package..."
+            dpkg --purge --force-remove-reinstreq broadcom-sta-dkms 2>/dev/null || true
+        fi
+    else
+        err "Could not obtain broadcom-sta-dkms package."
+    fi
+
+    if [[ "$WIFI_INSTALLED" == false ]]; then
+        err "WiFi driver installation failed. WiFi may not work."
+        err "After reboot, try: sudo apt install broadcom-sta-dkms"
+        REBOOT_RECOMMENDED=true
     fi
 fi
 

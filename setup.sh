@@ -165,7 +165,7 @@ should_run_script() {
 
     # Check --from filter
     if [[ -n "$FROM_SCRIPT" ]]; then
-        [[ "$num" -ge "$FROM_SCRIPT" ]] && return 0 || return 1
+        [[ "$((10#$num))" -ge "$((10#$FROM_SCRIPT))" ]] && return 0 || return 1
     fi
 
     return 0
